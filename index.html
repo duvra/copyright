@@ -1,29 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>🎬 YouTube Copyright Strike Form</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
 <body>
   <header class="site-header">
-    <h1>hello, world 👋</h1>
-    <nav>
-      <a href="#">Home</a>
-      <a href="#">About</a>
-      <button id="theme-toggle" class="btn outline" aria-label="Toggle theme">Toggle theme</button>
-    </nav>
+    <h1>🎬 YouTube Copyright Strike Form</h1>
+    <p class="muted">Prepare a DMCA-style notice for infringing YouTube videos.</p>
   </header>
 
   <main class="container">
-    <section class="card">
-      <h2>Welcome</h2>
-      <p>This is my first page hosted on GitHub. Below is a tiny interactive widget.</p>
+    <form id="strikeForm" novalidate>
+      <!-- 1. Claimant Information -->
+      <section class="card">
+        <h2>1) Claimant Information</h2>
 
-      <div class="counter">
-        <button id="dec" class="btn">−</button>
-        <output id="count" aria-live="polite">0</output>
-        <button id="inc" class="btn">+</button>
-      </div>
-    </section>
+        <div class="grid two">
+          <div class="field">
+            <label for="fullName">Full Legal Name <span class="req">*</span></label>
+            <input id="fullName" name="fullName" type="text" autocomplete="name" required />
+            <p class="hint">Must be the copyright owner or authorized agent.</p>
+          </div>
+
+          <div class="field">
+            <label for="organization">Organization (optional)</label>
+            <input id="organization" name="organization" type="text" autocomplete="organization" />
+          </div>
+        </div>
+
+        <div class="grid two">
+          <div class="field">
+            <label for="email">Email Address <span class="req">*</span></label>
+            <input id="email" name="email" type="email" inputmode="email" autocomplete="email" required />
+          </div>
+          <div class="field">
+            <label for="phone">Phone Number (optional)</label>
+            <input id="phone" name="phone" type="tel" inputmode="tel" placeholder="+1 555-555-5555" />
+          </div>
+        </div>
+
+        <fieldset class="field">
+          <legend>Mailing Address (optional but recommended)</legend>
+          <div class="grid two">
+            <input id="street" name="street" type="text" placeholder="Street address" autocomplete="address-line1" />
+            <input id="city" name="city" type="text" placeholder="City" autocomplete="address-level2" />
+          </div>
+          <div class="grid three">
+            <input id="state" name="state" type="text" placeholder="State/Province" autocomplete="address-level1" />
+            <input id="postal" name="postal" type="text" placeholder="Postal code" autocomplete="postal-code" />
+            <input id="country" name="country" type="text" placeholder="Country" autocomplete="country-name" />
+          </div>
+        </fieldset>
+      </section>
+
+      <!-- 2. Copyrighted Work -->
+      <section class="card">
+        <h2>2) Copyrighted Work Information</h2>
+        <div class="grid two">
+          <div class="field">
+            <label for="workTitle">Title of Your Work</label>
+            <input id="workTitle" name="workTitle" type="text" />
+          </div>
+          <div class="field">
+            <label for="workType">Description</label>
+            <input id="workType" name="workType" type="text" placeholder="e.g., music track, video clip, artwork" />
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. Infringing Videos -->
+      <section class="card">
+        <h2>3) Infringing YouTube Video(s) <span class="req">*</span></h2>
+        <p class="hint">Add one or more URLs. Optionally specify timestamps if only a portion infringes.</p>
+
+        <div id="videos"></div>
+
+        <div class="actions-inline">
+          <button id="addVideo" class="btn outline" type="button">+ Add Video</button>
+        </div>
+
+        <div class="field">
+          <label for="infringementDesc">Description of Infringement</label>
+          <input id="infringementDesc" name="infringementDesc" type="text" placeholder="e.g., My video was re-uploaded without permission" />
+        </div>
+      </section>
+
+      <!-- 4. Requested Action -->
+      <section class="card">
+        <h2>4) Requested Action</h2>
+        <div class="grid two">
+          <label class="check">
+            <input type="checkbox" name="removeVideos" id="removeVideos" checked />
+            <span>Remove video(s) from YouTube</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" name="disableAccount" id="disableAccount" />
+            <span>Disable access/account (for repeat infringement)</span>
+          </label>
+        </div>
+      </section>
+
+      <!-- 5. Legal Attestations -->
+      <section class="card">
+        <h2>5) Legal Attestations <span class="req">*</span></h2>
+
+        <label class="check">
+          <input type="checkbox" id="attestGoodFaith" required />
+          <span>I have a good-faith belief that the use of the material in the manner complained of is not authorized by the copyright owner, its agent, or the law.</span>
+        </label>
+
+        <label class="check">
+          <input type="checkbox" id="attestAccuracy" required />
+          <span>The information in this notice is accurate, and under penalty of perjury, I am authorized to act on behalf of the copyright owner.</span>
+        </label>
+
+        <p class="warning">Submitting a false notice may result in account penalties and legal liability.</p>
+      </section>
+
+      <!-- 6. Signature -->
+      <section class="card">
+        <h2>6) Signature</h2>
+
+        <div class="grid two">
+          <div class="field">
+            <label for="signature">Electronic Signature (type full legal name) <span class="req">*</span></label>
+            <input id="signature" name="signature" type="text" required />
+          </div>
+          <div class="field">
+            <label for="date">Date</label>
+            <input id="date" name="date" type="date" readonly />
+          </div>
+        </div>
+      </section>
+
+      <!-- Actions -->
+      <section class="card">
+        <div class="actions">
+          <button class="btn" type="submit">Preview & Download JSON</button>
+          <button class="btn outline" type="button" id="emailDraft">Create Email Draft</button>
+          <button class="btn ghost" type="reset">Reset</button>
+        </div>
+        <p class="muted tiny">This tool creates a well-structured record of your notice and an email draft you can send. Check all details carefully.</p>
+      </section>
+    </form>
+
+    <!-- Preview Modal -->
+    <dialog id="previewModal">
+      <article>
+        <header>
+          <h3>Preview Notice</h3>
+          <button id="closePreview" class="icon" aria-label="Close preview">✕</button>
+        </header>
+        <pre id="previewContent" class="preview"></pre>
+        <footer class="modal-actions">
+          <button id="downloadJson" class="btn">Download JSON</button>
+          <button id="closePreview2" class="btn outline">Close</button>
+        </footer>
+      </article>
+    </dialog>
+
   </main>
 
   <footer class="site-footer">
-    <small>© 2025 Your Name</small>
+    <small>© <span id="year"></span> Your Name • This is not legal advice.</small>
   </footer>
 
   <script src="script.js"></script>
 </body>
+</html>
