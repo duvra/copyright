@@ -11,30 +11,65 @@ function todayISO(){
 }
 function uid(){ return Math.random().toString(36).slice(2) + Date.now().toString(36); }
 
-const YT_ID_REGEXES = [
-  /(?:^|\/)watch\?[^#]*\bv=([\w-]{11})/i,       // youtube.com/watch?v=ID
-  /youtu\.be\/([\w-]{11})(?:[?&#].*)?$/i,       // youtu.be/ID
-  /youtube\.com\/shorts\/([\w-]{11})/i,         // shorts/ID
-  /youtube\.com\/embed\/([\w-]{11})/i,          // embed/ID
-  /youtube\.com\/live\/([\w-]{11})/i            // live/ID
-];
+/* Robust YouTube ID extractor */
+function extractVideoId(raw){
+  if (!raw) return null;
+  let url = String(raw).trim();
+  // Handle pasted bare IDs
+  if (/^[\w-]{11}$/.test(url)) return url;
 
-function extractVideoId(url){
-  if (!url) return null;
-  url = url.trim().replace(/^https?:\/\/(m\.|music\.)/i, "https://www.");
-  for (const re of YT_ID_REGEXES){
-    const m = url.match(re);
-    if (m) return m[1];
-  }
+  // Normalize common mobile/music subdomains
+  url = url.replace(/^https?:\/\/(m\.|music\.)/i, "https://www.");
+
   try {
     const u = new URL(url);
-    const v = u.searchParams.get("v");
-    if (v && /^[\w-]{11}$/.test(v)) return v;
-  } catch {}
+    const host = u.hostname.replace(/^www\./i, "");
+
+    // youtu.be/<id>
+    if (/^youtu\.be$/i.test(host)) {
+      const seg = u.pathname.split("/").filter(Boolean)[0] || "";
+      if (/^[\w-]{11}$/.test(seg)) return seg;
+    }
+
+    // youtube.com/...
+    if (/youtube\.com$/i.test(host)) {
+      const path = u.pathname;
+
+      // /watch?v=<id>
+      const v = u.searchParams.get("v");
+      if (v && /^[\w-]{11}$/.test(v)) return v;
+
+      // /shorts/<id>, /embed/<id>, /live/<id>, /v/<id>
+      const m = path.match(/\/(shorts|embed|live|v)\/([\w-]{11})/i);
+      if (m) return m[2];
+    }
+
+  } catch {
+    // Not a URL; try classic patterns inside the string
+    const m = url.match(/(?:watch\?[^#]*\bv=|youtu\.be\/|shorts\/|embed\/|live\/)([\w-]{11})/i);
+    if (m) return m[1];
+  }
   return null;
 }
 
-function thumbUrl(vid){ return `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`; }
+/* Thumbnail helpers with fallbacks */
+function thumbnailCandidates(id){
+  return [
+    `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`,
+    `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+    `https://i.ytimg.com/vi/${id}/mqdefault.jpg`
+  ];
+}
+function setBestThumbnail(imgEl, id){
+  const chain = thumbnailCandidates(id);
+  let i = 0;
+  const tryNext = () => {
+    if (i >= chain.length) return;
+    imgEl.src = chain[i++];
+  };
+  imgEl.onerror = tryNext;
+  tryNext();
+}
 
 async function fetchJson(url){
   try {
@@ -44,10 +79,10 @@ async function fetchJson(url){
   } catch { return null; }
 }
 
-/* Get metadata via oEmbed (primary) then noembed (fallback). Always returns id + thumbnail at minimum. */
+/* Prefer YouTube oEmbed, then noembed; if both fail, we still return id + thumb */
 async function fetchMetaByUrl(url){
   const id = extractVideoId(url);
-  let title = null, author = null, thumbnail = id ? thumbUrl(id) : null;
+  let title = null, author = null;
 
   const oe = await fetchJson(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`);
   if (oe && oe.title){
@@ -55,7 +90,7 @@ async function fetchMetaByUrl(url){
       id,
       title: oe.title,
       author: oe.author_name || null,
-      thumbnail: oe.thumbnail_url || thumbnail,
+      thumbnail: oe.thumbnail_url || null,
       url
     };
   }
@@ -65,11 +100,11 @@ async function fetchMetaByUrl(url){
       id,
       title: ne.title,
       author: ne.author_name || null,
-      thumbnail: ne.thumbnail_url || thumbnail,
+      thumbnail: ne.thumbnail_url || null,
       url
     };
   }
-  return { id, title, author, thumbnail, url };
+  return { id, title, author, thumbnail: null, url };
 }
 
 /* ========= Local Storage ========= */
@@ -85,7 +120,7 @@ function saveStrikes(list){
   localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
 }
 
-/* ========= Animated show/hide helpers ========= */
+/* ========= Fade helpers ========= */
 function showFade(el){
   if (!el) return;
   if (el.hidden){
@@ -122,7 +157,7 @@ function makeVideoRow(initialUrl=""){
     <button type="button" class="btn outline remove">Remove</button>
 
     <div class="video-meta" hidden>
-      <img alt="Video thumbnail" class="vm-thumb" />
+      <img alt="Video thumbnail" class="vm-thumb" loading="lazy" />
       <div>
         <div class="vm-title"></div>
         <div class="vm-author"></div>
@@ -140,30 +175,39 @@ function makeVideoRow(initialUrl=""){
   let debounce;
   const updatePreview = async () => {
     const url = urlInput.value.trim();
-    if (!url) { hideFade(vm); titleInput.value = ""; return; }
     const id = extractVideoId(url);
-    if (!id){ hideFade(vm); titleInput.value = ""; return; }
 
-    // Show thumbnail immediately (fade in container)
-    vmThumb.src = thumbUrl(id);
+    if (!url || !id) {
+      hideFade(vm);
+      titleInput.value = "";
+      vmThumb.src = "";
+      vmTitle.textContent = "";
+      vmAuthor.textContent = "";
+      return;
+    }
+
+    // Show container with a thumbnail immediately (with fallback chain)
+    setBestThumbnail(vmThumb, id);
     vmTitle.textContent = "Fetching title…";
     vmAuthor.textContent = "";
     titleInput.value = "";
     showFade(vm);
 
+    // Fetch metadata (title/author) asynchronously
     const meta = await fetchMetaByUrl(url);
-    // Only update if the same ID still matches (avoid race condition)
+    // Only update if the input still resolves to the same id (avoid race)
     if (extractVideoId(urlInput.value.trim()) === id){
       if (meta?.title) { vmTitle.textContent = meta.title; titleInput.value = meta.title; }
       else { vmTitle.textContent = "(Title unavailable)"; }
       vmAuthor.textContent = meta?.author ? `by ${meta.author}` : "";
+      // If remote gave us a specific thumbnail, prefer it (else keep the one already loaded)
       if (meta?.thumbnail) vmThumb.src = meta.thumbnail;
     }
   };
 
   urlInput.addEventListener("input", () => {
     clearTimeout(debounce);
-    debounce = setTimeout(updatePreview, 280);
+    debounce = setTimeout(updatePreview, 250);
   });
   urlInput.addEventListener("blur", updatePreview);
 
@@ -250,7 +294,8 @@ function initIndexPage(){
           url: item.url,
           id: item.id,
           title: item.title || "(title unavailable)",
-          thumbnail: thumbUrl(item.id),
+          // Keep the same chain logic for reliability in the table too:
+          thumbnail: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`,
           timestamps: item.stamps || null
         },
         attest: { goodFaith: att1, accuracy: att2 },
@@ -298,7 +343,8 @@ function makeRow(s){
     </td>
     <td>
       <a href="${s.video.url}" target="_blank" rel="noopener noreferrer">
-        <img class="thumb" src="${s.video.thumbnail}" alt="Video thumbnail">
+        <img class="thumb" src="${s.video.thumbnail}" alt="Video thumbnail"
+             onerror="this.onerror=null; this.src='https://i.ytimg.com/vi/${s.video.id}/mqdefault.jpg'">
       </a>
     </td>
     <td>
@@ -326,9 +372,7 @@ function renderTable(){
 function initStrikesPage(){
   const year = $("#year"); if (year) year.textContent = new Date().getFullYear();
   renderTable();
-
-  // Recompute statuses periodically so red appears after 5 mins automatically
-  setInterval(() => renderTable(), 30_000); // every 30 seconds
+  setInterval(renderTable, 30_000); // update statuses over time
 
   $("#clearHistory").addEventListener("click", () => {
     if (confirm("This will clear your local strike history (cannot be undone). Continue?")){
