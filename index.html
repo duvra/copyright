@@ -20,7 +20,7 @@
         <div class="grid two">
           <div class="field">
             <label for="workTitle">Title of Your Work <span class="req">*</span></label>
-            <input id="workTitle" name="workTitle" type="text" required placeholder="e.g., My Original Song" />
+            <input id="workTitle" name="workTitle" type="text" placeholder="e.g., My Original Song" />
           </div>
           <div class="field">
             <label for="workType">Description (optional)</label>
@@ -32,7 +32,7 @@
       <!-- Infringing videos -->
       <section class="card">
         <h2>2) Infringing YouTube Video(s) <span class="req">*</span></h2>
-        <p class="hint">Paste one or more YouTube links. Title and thumbnail will auto-load.</p>
+        <p class="hint">Paste one or more YouTube links. Title & thumbnail will appear below each box.</p>
 
         <div id="videos"></div>
         <div class="actions-inline">
@@ -49,11 +49,11 @@
       <section class="card">
         <h2>3) Legal Attestations <span class="req">*</span></h2>
         <label class="check">
-          <input type="checkbox" id="attestGoodFaith" required />
+          <input type="checkbox" id="attestGoodFaith" />
           <span>I have a good-faith belief that the use of the material is not authorized by the copyright owner, its agent, or the law.</span>
         </label>
         <label class="check">
-          <input type="checkbox" id="attestAccuracy" required />
+          <input type="checkbox" id="attestAccuracy" />
           <span>The information in this notice is accurate, and under penalty of perjury, I am authorized to act on behalf of the copyright owner.</span>
         </label>
       </section>
@@ -64,7 +64,7 @@
         <div class="grid two">
           <div class="field">
             <label for="signature">Electronic Signature (full legal name) <span class="req">*</span></label>
-            <input id="signature" name="signature" type="text" required />
+            <input id="signature" name="signature" type="text" placeholder="Your full name" />
           </div>
           <div class="field">
             <label for="date">Date</label>
@@ -88,7 +88,6 @@
     <small>© <span id="year"></span> Your Name • This tool does not send anything to YouTube.</small>
   </footer>
 
-  <!-- cache-bust + defer so the script always loads after HTML and bypasses old Pages cache -->
-  <script src="script.js?v=3" defer></script>
+  <script src="script.js?v=9" defer></script>
 </body>
 </html>
