@@ -2,6 +2,7 @@
 const $ = (sel, ctx = document) => ctx.querySelector(sel);
 const $$ = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
 const STORAGE_KEY = "yt_strikes";
+const STATUS_DELAY_MS = 10_000; // 10 seconds per your request
 
 function todayISO(){
   const d = new Date();
@@ -15,44 +16,31 @@ function uid(){ return Math.random().toString(36).slice(2) + Date.now().toString
 function extractVideoId(raw){
   if (!raw) return null;
   let url = String(raw).trim();
-  // Handle pasted bare IDs
-  if (/^[\w-]{11}$/.test(url)) return url;
+  if (/^[\w-]{11}$/.test(url)) return url; // pasted bare ID
 
-  // Normalize common mobile/music subdomains
   url = url.replace(/^https?:\/\/(m\.|music\.)/i, "https://www.");
-
   try {
     const u = new URL(url);
     const host = u.hostname.replace(/^www\./i, "");
 
-    // youtu.be/<id>
     if (/^youtu\.be$/i.test(host)) {
       const seg = u.pathname.split("/").filter(Boolean)[0] || "";
       if (/^[\w-]{11}$/.test(seg)) return seg;
     }
-
-    // youtube.com/...
     if (/youtube\.com$/i.test(host)) {
-      const path = u.pathname;
-
-      // /watch?v=<id>
       const v = u.searchParams.get("v");
       if (v && /^[\w-]{11}$/.test(v)) return v;
-
-      // /shorts/<id>, /embed/<id>, /live/<id>, /v/<id>
-      const m = path.match(/\/(shorts|embed|live|v)\/([\w-]{11})/i);
+      const m = u.pathname.match(/\/(shorts|embed|live|v)\/([\w-]{11})/i);
       if (m) return m[2];
     }
-
   } catch {
-    // Not a URL; try classic patterns inside the string
     const m = url.match(/(?:watch\?[^#]*\bv=|youtu\.be\/|shorts\/|embed\/|live\/)([\w-]{11})/i);
     if (m) return m[1];
   }
   return null;
 }
 
-/* Thumbnail helpers with fallbacks */
+/* Thumbnails with fallbacks */
 function thumbnailCandidates(id){
   return [
     `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`,
@@ -63,10 +51,7 @@ function thumbnailCandidates(id){
 function setBestThumbnail(imgEl, id){
   const chain = thumbnailCandidates(id);
   let i = 0;
-  const tryNext = () => {
-    if (i >= chain.length) return;
-    imgEl.src = chain[i++];
-  };
+  const tryNext = () => { if (i < chain.length) imgEl.src = chain[i++]; };
   imgEl.onerror = tryNext;
   tryNext();
 }
@@ -79,32 +64,18 @@ async function fetchJson(url){
   } catch { return null; }
 }
 
-/* Prefer YouTube oEmbed, then noembed; if both fail, we still return id + thumb */
+/* Prefer oEmbed, fallback to noembed */
 async function fetchMetaByUrl(url){
   const id = extractVideoId(url);
-  let title = null, author = null;
-
   const oe = await fetchJson(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`);
   if (oe && oe.title){
-    return {
-      id,
-      title: oe.title,
-      author: oe.author_name || null,
-      thumbnail: oe.thumbnail_url || null,
-      url
-    };
+    return { id, title: oe.title, author: oe.author_name || null, thumbnail: oe.thumbnail_url || null, url };
   }
   const ne = await fetchJson(`https://noembed.com/embed?url=${encodeURIComponent(url)}`);
   if (ne && ne.title){
-    return {
-      id,
-      title: ne.title,
-      author: ne.author_name || null,
-      thumbnail: ne.thumbnail_url || null,
-      url
-    };
+    return { id, title: ne.title, author: ne.author_name || null, thumbnail: ne.thumbnail_url || null, url };
   }
-  return { id, title, author, thumbnail: null, url };
+  return { id, title: null, author: null, thumbnail: null, url };
 }
 
 /* ========= Local Storage ========= */
@@ -193,14 +164,13 @@ function makeVideoRow(initialUrl=""){
     titleInput.value = "";
     showFade(vm);
 
-    // Fetch metadata (title/author) asynchronously
+    // Fetch metadata (title/author)
     const meta = await fetchMetaByUrl(url);
-    // Only update if the input still resolves to the same id (avoid race)
+    // Only update if the input still resolves to the same id
     if (extractVideoId(urlInput.value.trim()) === id){
       if (meta?.title) { vmTitle.textContent = meta.title; titleInput.value = meta.title; }
       else { vmTitle.textContent = "(Title unavailable)"; }
       vmAuthor.textContent = meta?.author ? `by ${meta.author}` : "";
-      // If remote gave us a specific thumbnail, prefer it (else keep the one already loaded)
       if (meta?.thumbnail) vmThumb.src = meta.thumbnail;
     }
   };
@@ -237,7 +207,6 @@ function initIndexPage(){
   $("#strikeForm").addEventListener("submit", async (e) => {
     e.preventDefault();
 
-    // Collect
     const workTitle = $("#workTitle").value.trim();
     const workType  = $("#workType").value.trim();
     const desc      = $("#infringementDesc").value.trim();
@@ -246,7 +215,6 @@ function initIndexPage(){
     const att1      = $("#attestGoodFaith").checked;
     const att2      = $("#attestAccuracy").checked;
 
-    // Validate
     const errors = [];
     if (!workTitle) errors.push("Title of your work is required.");
     if (!att1 || !att2) errors.push("You must check both legal attestations.");
@@ -294,7 +262,7 @@ function initIndexPage(){
           url: item.url,
           id: item.id,
           title: item.title || "(title unavailable)",
-          // Keep the same chain logic for reliability in the table too:
+          // Reliable default; the table also has an onerror fallback to mqdefault
           thumbnail: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`,
           timestamps: item.stamps || null
         },
@@ -305,7 +273,6 @@ function initIndexPage(){
     strikes.sort((a,b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
     saveStrikes(strikes);
 
-    // Redirect to chart
     location.href = "strikes.html";
   });
 }
@@ -314,14 +281,14 @@ function initIndexPage(){
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
 function computeStatus(s){
-  // If work title contains "GFX render" (any case/spacing), mark resolved (green)
+  // Immediate resolve if work title includes "GFX render"
   if (/gfx\s*render/i.test(s.workTitle)) {
     return { cls: "status--resolved", label: "Request resolved" };
   }
-  // Otherwise: under review initially; after 5 minutes -> info needed (red)
+  // Otherwise start under review, then become info needed after 10s
   const created = new Date(s.createdAt).getTime();
-  const ageMin = (Date.now() - created) / 60000;
-  if (ageMin >= 5) return { cls: "status--needed", label: "Info needed" };
+  const ageMs = Date.now() - created;
+  if (ageMs >= STATUS_DELAY_MS) return { cls: "status--needed", label: "Info needed" };
   return { cls: "status--review", label: "Under review" };
 }
 
@@ -372,7 +339,9 @@ function renderTable(){
 function initStrikesPage(){
   const year = $("#year"); if (year) year.textContent = new Date().getFullYear();
   renderTable();
-  setInterval(renderTable, 30_000); // update statuses over time
+
+  // Update statuses frequently so the 10-second transition is visible
+  setInterval(renderTable, 1_000);
 
   $("#clearHistory").addEventListener("click", () => {
     if (confirm("This will clear your local strike history (cannot be undone). Continue?")){
