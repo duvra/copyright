@@ -2,7 +2,7 @@
 const $ = (sel, ctx = document) => ctx.querySelector(sel);
 const $$ = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
 const STORAGE_KEY = "yt_strikes";
-const STATUS_DELAY_MS = 10_000; // 10 seconds per your request
+const STATUS_DELAY_MS = 10_000; // 10 seconds: always show "Under review" before changing
 
 function todayISO(){
   const d = new Date();
@@ -18,22 +18,29 @@ function extractVideoId(raw){
   let url = String(raw).trim();
   if (/^[\w-]{11}$/.test(url)) return url; // pasted bare ID
 
+  // normalize mobile/music subdomains
   url = url.replace(/^https?:\/\/(m\.|music\.)/i, "https://www.");
+
   try {
     const u = new URL(url);
     const host = u.hostname.replace(/^www\./i, "");
 
+    // youtu.be/<id>
     if (/^youtu\.be$/i.test(host)) {
       const seg = u.pathname.split("/").filter(Boolean)[0] || "";
       if (/^[\w-]{11}$/.test(seg)) return seg;
     }
+
+    // youtube.com/...
     if (/youtube\.com$/i.test(host)) {
       const v = u.searchParams.get("v");
       if (v && /^[\w-]{11}$/.test(v)) return v;
+
       const m = u.pathname.match(/\/(shorts|embed|live|v)\/([\w-]{11})/i);
       if (m) return m[2];
     }
   } catch {
+    // not a URL; search common patterns
     const m = url.match(/(?:watch\?[^#]*\bv=|youtu\.be\/|shorts\/|embed\/|live\/)([\w-]{11})/i);
     if (m) return m[1];
   }
@@ -64,7 +71,7 @@ async function fetchJson(url){
   } catch { return null; }
 }
 
-/* Prefer oEmbed, fallback to noembed */
+/* Prefer oEmbed, fallback to noembed; still fine if both blocked */
 async function fetchMetaByUrl(url){
   const id = extractVideoId(url);
   const oe = await fetchJson(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`);
@@ -157,16 +164,15 @@ function makeVideoRow(initialUrl=""){
       return;
     }
 
-    // Show container with a thumbnail immediately (with fallback chain)
+    // show container + thumbnail immediately (with fallbacks)
     setBestThumbnail(vmThumb, id);
     vmTitle.textContent = "Fetching title…";
     vmAuthor.textContent = "";
     titleInput.value = "";
     showFade(vm);
 
-    // Fetch metadata (title/author)
+    // fetch metadata
     const meta = await fetchMetaByUrl(url);
-    // Only update if the input still resolves to the same id
     if (extractVideoId(urlInput.value.trim()) === id){
       if (meta?.title) { vmTitle.textContent = meta.title; titleInput.value = meta.title; }
       else { vmTitle.textContent = "(Title unavailable)"; }
@@ -207,6 +213,7 @@ function initIndexPage(){
   $("#strikeForm").addEventListener("submit", async (e) => {
     e.preventDefault();
 
+    // Collect
     const workTitle = $("#workTitle").value.trim();
     const workType  = $("#workType").value.trim();
     const desc      = $("#infringementDesc").value.trim();
@@ -215,6 +222,7 @@ function initIndexPage(){
     const att1      = $("#attestGoodFaith").checked;
     const att2      = $("#attestAccuracy").checked;
 
+    // Validate
     const errors = [];
     if (!workTitle) errors.push("Title of your work is required.");
     if (!att1 || !att2) errors.push("You must check both legal attestations.");
@@ -253,7 +261,7 @@ function initIndexPage(){
     toAdd.forEach(item => {
       strikes.push({
         id: uid(),
-        createdAt: now,
+        createdAt: now, // used for timing the status change
         date,
         workTitle,
         workType: workType || null,
@@ -262,7 +270,6 @@ function initIndexPage(){
           url: item.url,
           id: item.id,
           title: item.title || "(title unavailable)",
-          // Reliable default; the table also has an onerror fallback to mqdefault
           thumbnail: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`,
           timestamps: item.stamps || null
         },
@@ -273,6 +280,7 @@ function initIndexPage(){
     strikes.sort((a,b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
     saveStrikes(strikes);
 
+    // Redirect to chart
     location.href = "strikes.html";
   });
 }
@@ -280,16 +288,20 @@ function initIndexPage(){
 /* ========= Strikes (history chart) ========= */
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
+/* NEW: Always wait 10s in "Under review". After that:
+   - if work title contains "GFX render" -> green "Request resolved"
+   - else -> red "Info needed" */
 function computeStatus(s){
-  // Immediate resolve if work title includes "GFX render"
+  const created = new Date(s.createdAt).getTime();
+  const ageMs = Date.now() - created;
+
+  if (ageMs < STATUS_DELAY_MS) {
+    return { cls: "status--review", label: "Under review" };
+  }
   if (/gfx\s*render/i.test(s.workTitle)) {
     return { cls: "status--resolved", label: "Request resolved" };
   }
-  // Otherwise start under review, then become info needed after 10s
-  const created = new Date(s.createdAt).getTime();
-  const ageMs = Date.now() - created;
-  if (ageMs >= STATUS_DELAY_MS) return { cls: "status--needed", label: "Info needed" };
-  return { cls: "status--review", label: "Under review" };
+  return { cls: "status--needed", label: "Info needed" };
 }
 
 function makeRow(s){
@@ -340,7 +352,7 @@ function initStrikesPage(){
   const year = $("#year"); if (year) year.textContent = new Date().getFullYear();
   renderTable();
 
-  // Update statuses frequently so the 10-second transition is visible
+  // Update statuses every second so the 10s switch is visible in-page
   setInterval(renderTable, 1_000);
 
   $("#clearHistory").addEventListener("click", () => {
