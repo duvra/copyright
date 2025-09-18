@@ -85,6 +85,23 @@ function saveStrikes(list){
   localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
 }
 
+/* ========= Animated show/hide helpers ========= */
+function showFade(el){
+  if (!el) return;
+  if (el.hidden){
+    el.hidden = false;
+    el.classList.remove("show");
+    requestAnimationFrame(() => el.classList.add("show"));
+  } else {
+    el.classList.add("show");
+  }
+}
+function hideFade(el){
+  if (!el) return;
+  el.classList.remove("show");
+  setTimeout(() => { el.hidden = true; }, 250);
+}
+
 /* ========= Index (new notice) ========= */
 function makeVideoRow(initialUrl=""){
   const row = document.createElement("div");
@@ -123,19 +140,19 @@ function makeVideoRow(initialUrl=""){
   let debounce;
   const updatePreview = async () => {
     const url = urlInput.value.trim();
-    if (!url) { vm.hidden = true; titleInput.value = ""; return; }
+    if (!url) { hideFade(vm); titleInput.value = ""; return; }
     const id = extractVideoId(url);
-    if (!id){ vm.hidden = true; titleInput.value = ""; return; }
+    if (!id){ hideFade(vm); titleInput.value = ""; return; }
 
-    // Always show a thumbnail immediately (even if metadata fetch fails)
+    // Show thumbnail immediately (fade in container)
     vmThumb.src = thumbUrl(id);
-    vm.hidden = false;
     vmTitle.textContent = "Fetching title…";
     vmAuthor.textContent = "";
     titleInput.value = "";
+    showFade(vm);
 
     const meta = await fetchMetaByUrl(url);
-    // Update only if the same ID is still present (avoid race conditions)
+    // Only update if the same ID still matches (avoid race condition)
     if (extractVideoId(urlInput.value.trim()) === id){
       if (meta?.title) { vmTitle.textContent = meta.title; titleInput.value = meta.title; }
       else { vmTitle.textContent = "(Title unavailable)"; }
@@ -146,7 +163,7 @@ function makeVideoRow(initialUrl=""){
 
   urlInput.addEventListener("input", () => {
     clearTimeout(debounce);
-    debounce = setTimeout(updatePreview, 300);
+    debounce = setTimeout(updatePreview, 280);
   });
   urlInput.addEventListener("blur", updatePreview);
 
@@ -185,7 +202,7 @@ function initIndexPage(){
     const att1      = $("#attestGoodFaith").checked;
     const att2      = $("#attestAccuracy").checked;
 
-    // Validate (pure JS; browser won't auto-block)
+    // Validate
     const errors = [];
     if (!workTitle) errors.push("Title of your work is required.");
     if (!att1 || !att2) errors.push("You must check both legal attestations.");
@@ -210,7 +227,7 @@ function initIndexPage(){
       return;
     }
 
-    // Fetch any missing titles (doesn't block thumbnail)
+    // Fetch any missing titles
     await Promise.all(toAdd.map(async item => {
       if (!item.title){
         const meta = await fetchMetaByUrl(item.url);
@@ -218,7 +235,7 @@ function initIndexPage(){
       }
     }));
 
-    // Build & save strikes (one per video)
+    // Save (one entry per video)
     const strikes = loadStrikes();
     const now = new Date().toISOString();
     toAdd.forEach(item => {
@@ -251,10 +268,28 @@ function initIndexPage(){
 /* ========= Strikes (history chart) ========= */
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
+function computeStatus(s){
+  // If work title contains "GFX render" (any case/spacing), mark resolved (green)
+  if (/gfx\s*render/i.test(s.workTitle)) {
+    return { cls: "status--resolved", label: "Request resolved" };
+  }
+  // Otherwise: under review initially; after 5 minutes -> info needed (red)
+  const created = new Date(s.createdAt).getTime();
+  const ageMin = (Date.now() - created) / 60000;
+  if (ageMin >= 5) return { cls: "status--needed", label: "Info needed" };
+  return { cls: "status--review", label: "Under review" };
+}
+
 function makeRow(s){
+  const st = computeStatus(s);
   const tr = document.createElement("tr");
   tr.innerHTML = `
     <td>${s.date || ""}</td>
+    <td>
+      <span class="status ${st.cls}">
+        <span class="status-dot"></span>${st.label}
+      </span>
+    </td>
     <td>
       <div style="display:flex;flex-direction:column;gap:6px">
         <a href="${s.video.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(s.video.title)}</a>
@@ -274,24 +309,31 @@ function makeRow(s){
   return tr;
 }
 
-function initStrikesPage(){
-  const year = $("#year"); if (year) year.textContent = new Date().getFullYear();
-
+function renderTable(){
   const tbody = $("#strikesBody");
+  tbody.innerHTML = "";
   const list = loadStrikes();
   if (!list.length){
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td colspan="4" class="muted">No strikes submitted yet.</td>`;
+    tr.innerHTML = `<td colspan="5" class="muted">No strikes submitted yet.</td>`;
     tbody.appendChild(tr);
   } else {
     list.forEach(s => tbody.appendChild(makeRow(s)));
   }
   $("#summary").textContent = `${list.length} strike${list.length===1?"":"s"} stored locally.`;
+}
+
+function initStrikesPage(){
+  const year = $("#year"); if (year) year.textContent = new Date().getFullYear();
+  renderTable();
+
+  // Recompute statuses periodically so red appears after 5 mins automatically
+  setInterval(() => renderTable(), 30_000); // every 30 seconds
 
   $("#clearHistory").addEventListener("click", () => {
     if (confirm("This will clear your local strike history (cannot be undone). Continue?")){
       saveStrikes([]);
-      location.reload();
+      renderTable();
     }
   });
 }
