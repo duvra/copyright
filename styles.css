@@ -57,12 +57,11 @@ h2{font-size:1.2rem; margin:0 0 12px}
 .video-row input{background:#0b1220}
 .video-row .remove{justify-self:end; padding:8px 12px}
 
+/* Fade animation container for title/thumbnail */
 .video-meta{
   grid-column: 1 / -1;
   display:flex; align-items:center; gap:12px; background:#0b1220; border:1px solid var(--line);
   border-radius:12px; padding:10px 12px;
-
-  /* fade animation */
   opacity:0; transform: translateY(6px);
   transition: opacity .25s ease, transform .25s ease;
 }
