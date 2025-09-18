@@ -12,20 +12,21 @@ function todayISO(){
 function uid(){ return Math.random().toString(36).slice(2) + Date.now().toString(36); }
 
 const YT_ID_REGEXES = [
-  /(?:youtube\.com\/watch\?v=|youtube\.com\/.*&v=)([\w-]{11})/i,
-  /youtu\.be\/([\w-]{11})/i,
-  /youtube\.com\/shorts\/([\w-]{11})/i,
-  /youtube\.com\/embed\/([\w-]{11})/i,
-  /youtube\.com\/live\/([\w-]{11})/i
+  /(?:^|\/)watch\?[^#]*\bv=([\w-]{11})/i,       // youtube.com/watch?v=ID
+  /youtu\.be\/([\w-]{11})(?:[?&#].*)?$/i,       // youtu.be/ID
+  /youtube\.com\/shorts\/([\w-]{11})/i,         // shorts/ID
+  /youtube\.com\/embed\/([\w-]{11})/i,          // embed/ID
+  /youtube\.com\/live\/([\w-]{11})/i            // live/ID
 ];
 
 function extractVideoId(url){
   if (!url) return null;
+  // Tolerate mobile/music subdomains and whitespace
+  url = url.trim().replace(/^https?:\/\/(m\.|music\.)/i, "https://www.");
   for (const re of YT_ID_REGEXES){
     const m = url.match(re);
     if (m) return m[1];
   }
-  // fallback: look for v param
   try {
     const u = new URL(url);
     const v = u.searchParams.get("v");
@@ -36,37 +37,42 @@ function extractVideoId(url){
 
 function thumbUrl(vid){ return `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`; }
 
-/* Attempt fetch from YouTube oEmbed, fallback to noembed; else use only thumbnail and ID */
+async function fetchJson(url){
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.json();
+  } catch { return null; }
+}
+
+/* Get metadata via oEmbed (primary) then noembed (fallback). Always returns id + thumbnail at minimum. */
 async function fetchMetaByUrl(url){
   const id = extractVideoId(url);
   let title = null, author = null, thumbnail = id ? thumbUrl(id) : null;
 
-  const tryFetch = async (endpoint) => {
-    try {
-      const r = await fetch(endpoint, { mode: "cors" });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const j = await r.json();
-      return j;
-    } catch(e){ return null; }
-  };
-
-  // Try YouTube oEmbed
-  const oe = await tryFetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`);
+  // YouTube oEmbed
+  const oe = await fetchJson(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`);
   if (oe && oe.title){
-    title = oe.title;
-    author = oe.author_name || null;
-    thumbnail = oe.thumbnail_url || thumbnail;
-    return { id, title, author, thumbnail, url };
+    return {
+      id,
+      title: oe.title,
+      author: oe.author_name || null,
+      thumbnail: oe.thumbnail_url || thumbnail,
+      url
+    };
   }
-  // Fallback: noembed
-  const ne = await tryFetch(`https://noembed.com/embed?url=${encodeURIComponent(url)}`);
+  // noembed fallback
+  const ne = await fetchJson(`https://noembed.com/embed?url=${encodeURIComponent(url)}`);
   if (ne && ne.title){
-    title = ne.title;
-    author = ne.author_name || null;
-    thumbnail = ne.thumbnail_url || thumbnail;
-    return { id, title, author, thumbnail, url };
+    return {
+      id,
+      title: ne.title,
+      author: ne.author_name || null,
+      thumbnail: ne.thumbnail_url || thumbnail,
+      url
+    };
   }
-  // Last resort: ID-only
+  // fallback: at least show ID and thumb
   return { id, title, author, thumbnail, url };
 }
 
@@ -90,7 +96,7 @@ function makeVideoRow(initialUrl=""){
   row.innerHTML = `
     <div class="field">
       <label>YouTube Video URL <span class="req">*</span></label>
-      <input type="url" class="video-url" placeholder="https://www.youtube.com/watch?v=XXXXXXXXXXX" value="${initialUrl}">
+      <input type="url" class="video-url" required placeholder="https://www.youtube.com/watch?v=XXXXXXXXXXX" value="${initialUrl}">
     </div>
     <div class="field">
       <label>Timestamps (optional)</label>
@@ -123,9 +129,8 @@ function makeVideoRow(initialUrl=""){
     const url = urlInput.value.trim();
     if (!url) { vm.hidden = true; titleInput.value = ""; return; }
     const id = extractVideoId(url);
-    if (!id){
-      vm.hidden = true; titleInput.value = ""; return;
-    }
+    if (!id){ vm.hidden = true; titleInput.value = ""; return; }
+
     // Show provisional thumb immediately
     vmThumb.src = thumbUrl(id);
     vm.hidden = false;
@@ -134,27 +139,27 @@ function makeVideoRow(initialUrl=""){
     titleInput.value = "";
 
     const meta = await fetchMetaByUrl(url);
-    if (meta && extractVideoId(url) === meta.id){
-      if (meta.title) { vmTitle.textContent = meta.title; titleInput.value = meta.title; }
+    // Only update if input still matches (avoid race conditions)
+    if (extractVideoId(urlInput.value.trim()) === id){
+      if (meta?.title) { vmTitle.textContent = meta.title; titleInput.value = meta.title; }
       else { vmTitle.textContent = "(Title unavailable)"; }
-      vmAuthor.textContent = meta.author ? `by ${meta.author}` : "";
-      if (meta.thumbnail) vmThumb.src = meta.thumbnail;
+      vmAuthor.textContent = meta?.author ? `by ${meta.author}` : "";
+      if (meta?.thumbnail) vmThumb.src = meta.thumbnail;
     }
   };
 
   urlInput.addEventListener("input", () => {
     clearTimeout(debounce);
-    debounce = setTimeout(updatePreview, 400);
+    debounce = setTimeout(updatePreview, 350);
   });
   urlInput.addEventListener("blur", updatePreview);
+
   $(".remove", row).addEventListener("click", () => {
     row.remove();
     ensureAtLeastOneVideo();
   });
 
-  // If row created with a url, kick off fetch
   if (initialUrl) updatePreview();
-
   return row;
 }
 
@@ -164,8 +169,9 @@ function ensureAtLeastOneVideo(){
 }
 
 function initIndexPage(){
-  $("#year").textContent = new Date().getFullYear();
-  $("#date").value = todayISO();
+  // Footer year + date
+  const y = $("#year"); if (y) y.textContent = new Date().getFullYear();
+  const dateEl = $("#date"); if (dateEl) dateEl.value = todayISO();
 
   ensureAtLeastOneVideo();
   $("#addVideo").addEventListener("click", () => {
@@ -197,9 +203,8 @@ function initIndexPage(){
       if (!url){ errors.push("A video URL is empty."); continue; }
       const id = extractVideoId(url);
       if (!id){ errors.push(`Invalid YouTube URL: ${url}`); continue; }
-      const title = $(".video-title", row).value.trim(); // may be blank if fetch failed
+      const title = $(".video-title", row).value.trim();
       const stamps = $(".video-stamps", row).value.trim();
-
       toAdd.push({ url, id, title, stamps });
     }
 
@@ -208,7 +213,7 @@ function initIndexPage(){
       return;
     }
 
-    // Enrich any items missing titles
+    // Try to fetch missing titles
     await Promise.all(toAdd.map(async item => {
       if (!item.title){
         const meta = await fetchMetaByUrl(item.url);
@@ -216,14 +221,14 @@ function initIndexPage(){
       }
     }));
 
-    // Save one strike entry **per video**
+    // Save one strike entry per video
     const strikes = loadStrikes();
     const now = new Date().toISOString();
     toAdd.forEach(item => {
       strikes.push({
         id: uid(),
         createdAt: now,
-        date, // user-visible date
+        date, // user-chosen date
         workTitle,
         workType: workType || null,
         infringementDesc: desc || null,
@@ -238,25 +243,21 @@ function initIndexPage(){
         signature: sig
       });
     });
-    // Sort latest-first and save
     strikes.sort((a,b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
     saveStrikes(strikes);
 
-    // Go to chart
+    // Redirect to history page
     location.href = "strikes.html";
   });
 }
 
 /* ========= Strikes (history chart) ========= */
-function fmtDate(dstr){
-  // show YYYY-MM-DD; fallback to createdAt date
-  if (dstr) return dstr;
-  return todayISO();
-}
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
 function makeRow(s){
   const tr = document.createElement("tr");
   tr.innerHTML = `
-    <td>${fmtDate(s.date)}</td>
+    <td>${s.date || ''}</td>
     <td>
       <div style="display:flex;flex-direction:column;gap:6px">
         <a href="${s.video.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(s.video.title)}</a>
@@ -275,12 +276,9 @@ function makeRow(s){
   `;
   return tr;
 }
-function escapeHtml(s){
-  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-}
 
 function initStrikesPage(){
-  $("#year").textContent = new Date().getFullYear();
+  const y = $("#year"); if (y) y.textContent = new Date().getFullYear();
 
   const tbody = $("#strikesBody");
   const list = loadStrikes();
@@ -291,7 +289,6 @@ function initStrikesPage(){
   } else {
     list.forEach(s => tbody.appendChild(makeRow(s)));
   }
-
   $("#summary").textContent = `${list.length} strike${list.length===1?"":"s"} stored locally.`;
 
   $("#clearHistory").addEventListener("click", () => {
@@ -302,9 +299,8 @@ function initStrikesPage(){
   });
 }
 
-/* ========= Router ========= */
+/* ========= Auto-router (no body IDs needed) ========= */
 document.addEventListener("DOMContentLoaded", () => {
-  const page = document.body.id;
-  if (page === "page-index") initIndexPage();
-  if (page === "page-strikes") initStrikesPage();
+  if (document.getElementById("strikeForm")) initIndexPage();
+  if (document.getElementById("strikesTable")) initStrikesPage();
 });
