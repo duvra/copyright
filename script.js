@@ -21,7 +21,6 @@ const YT_ID_REGEXES = [
 
 function extractVideoId(url){
   if (!url) return null;
-  // Tolerate mobile/music subdomains and whitespace
   url = url.trim().replace(/^https?:\/\/(m\.|music\.)/i, "https://www.");
   for (const re of YT_ID_REGEXES){
     const m = url.match(re);
@@ -39,7 +38,7 @@ function thumbUrl(vid){ return `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`; }
 
 async function fetchJson(url){
   try {
-    const r = await fetch(url);
+    const r = await fetch(url, { cache: "no-store" });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return await r.json();
   } catch { return null; }
@@ -50,7 +49,6 @@ async function fetchMetaByUrl(url){
   const id = extractVideoId(url);
   let title = null, author = null, thumbnail = id ? thumbUrl(id) : null;
 
-  // YouTube oEmbed
   const oe = await fetchJson(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`);
   if (oe && oe.title){
     return {
@@ -61,7 +59,6 @@ async function fetchMetaByUrl(url){
       url
     };
   }
-  // noembed fallback
   const ne = await fetchJson(`https://noembed.com/embed?url=${encodeURIComponent(url)}`);
   if (ne && ne.title){
     return {
@@ -72,7 +69,6 @@ async function fetchMetaByUrl(url){
       url
     };
   }
-  // fallback: at least show ID and thumb
   return { id, title, author, thumbnail, url };
 }
 
@@ -96,7 +92,7 @@ function makeVideoRow(initialUrl=""){
   row.innerHTML = `
     <div class="field">
       <label>YouTube Video URL <span class="req">*</span></label>
-      <input type="url" class="video-url" required placeholder="https://www.youtube.com/watch?v=XXXXXXXXXXX" value="${initialUrl}">
+      <input type="url" class="video-url" placeholder="https://www.youtube.com/watch?v=XXXXXXXXXXX" value="${initialUrl}">
     </div>
     <div class="field">
       <label>Timestamps (optional)</label>
@@ -131,7 +127,7 @@ function makeVideoRow(initialUrl=""){
     const id = extractVideoId(url);
     if (!id){ vm.hidden = true; titleInput.value = ""; return; }
 
-    // Show provisional thumb immediately
+    // Always show a thumbnail immediately (even if metadata fetch fails)
     vmThumb.src = thumbUrl(id);
     vm.hidden = false;
     vmTitle.textContent = "Fetching title…";
@@ -139,7 +135,7 @@ function makeVideoRow(initialUrl=""){
     titleInput.value = "";
 
     const meta = await fetchMetaByUrl(url);
-    // Only update if input still matches (avoid race conditions)
+    // Update only if the same ID is still present (avoid race conditions)
     if (extractVideoId(urlInput.value.trim()) === id){
       if (meta?.title) { vmTitle.textContent = meta.title; titleInput.value = meta.title; }
       else { vmTitle.textContent = "(Title unavailable)"; }
@@ -150,7 +146,7 @@ function makeVideoRow(initialUrl=""){
 
   urlInput.addEventListener("input", () => {
     clearTimeout(debounce);
-    debounce = setTimeout(updatePreview, 350);
+    debounce = setTimeout(updatePreview, 300);
   });
   urlInput.addEventListener("blur", updatePreview);
 
@@ -169,8 +165,7 @@ function ensureAtLeastOneVideo(){
 }
 
 function initIndexPage(){
-  // Footer year + date
-  const y = $("#year"); if (y) y.textContent = new Date().getFullYear();
+  const year = $("#year"); if (year) year.textContent = new Date().getFullYear();
   const dateEl = $("#date"); if (dateEl) dateEl.value = todayISO();
 
   ensureAtLeastOneVideo();
@@ -181,6 +176,7 @@ function initIndexPage(){
   $("#strikeForm").addEventListener("submit", async (e) => {
     e.preventDefault();
 
+    // Collect
     const workTitle = $("#workTitle").value.trim();
     const workType  = $("#workType").value.trim();
     const desc      = $("#infringementDesc").value.trim();
@@ -189,6 +185,7 @@ function initIndexPage(){
     const att1      = $("#attestGoodFaith").checked;
     const att2      = $("#attestAccuracy").checked;
 
+    // Validate (pure JS; browser won't auto-block)
     const errors = [];
     if (!workTitle) errors.push("Title of your work is required.");
     if (!att1 || !att2) errors.push("You must check both legal attestations.");
@@ -213,7 +210,7 @@ function initIndexPage(){
       return;
     }
 
-    // Try to fetch missing titles
+    // Fetch any missing titles (doesn't block thumbnail)
     await Promise.all(toAdd.map(async item => {
       if (!item.title){
         const meta = await fetchMetaByUrl(item.url);
@@ -221,14 +218,14 @@ function initIndexPage(){
       }
     }));
 
-    // Save one strike entry per video
+    // Build & save strikes (one per video)
     const strikes = loadStrikes();
     const now = new Date().toISOString();
     toAdd.forEach(item => {
       strikes.push({
         id: uid(),
         createdAt: now,
-        date, // user-chosen date
+        date,
         workTitle,
         workType: workType || null,
         infringementDesc: desc || null,
@@ -246,7 +243,7 @@ function initIndexPage(){
     strikes.sort((a,b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
     saveStrikes(strikes);
 
-    // Redirect to history page
+    // Redirect to chart
     location.href = "strikes.html";
   });
 }
@@ -257,7 +254,7 @@ function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;',
 function makeRow(s){
   const tr = document.createElement("tr");
   tr.innerHTML = `
-    <td>${s.date || ''}</td>
+    <td>${s.date || ""}</td>
     <td>
       <div style="display:flex;flex-direction:column;gap:6px">
         <a href="${s.video.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(s.video.title)}</a>
@@ -278,7 +275,7 @@ function makeRow(s){
 }
 
 function initStrikesPage(){
-  const y = $("#year"); if (y) y.textContent = new Date().getFullYear();
+  const year = $("#year"); if (year) year.textContent = new Date().getFullYear();
 
   const tbody = $("#strikesBody");
   const list = loadStrikes();
@@ -299,7 +296,7 @@ function initStrikesPage(){
   });
 }
 
-/* ========= Auto-router (no body IDs needed) ========= */
+/* ========= Auto-router ========= */
 document.addEventListener("DOMContentLoaded", () => {
   if (document.getElementById("strikeForm")) initIndexPage();
   if (document.getElementById("strikesTable")) initStrikesPage();
